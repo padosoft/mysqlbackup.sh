@@ -1,0 +1,14 @@
+#!/bin/bash
+# local config file template used by mysqlbackup.sh, 
+# USAGE:
+# rename this file mysqlbackup.config and set your vars.
+# mysqlbackup.config is excluded from git
+
+
+DBUSER="admin"
+DBPASS=`cat /etc/psa/.psa.shadow`
+DBOPTION="-f"
+DEFPATH="/home/backup/"
+DATA=`/bin/date +"%a"`
+MYSQLBIN="/usr/bin/mysql"
+MYSQLDUMPBIN="/usr/bin/mysqldump"
