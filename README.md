@@ -33,6 +33,17 @@ cd mysqlbackup.sh
 chmod +x mysqlbackup.sh
 ```
 
+
+If you want to set your value and override default var values create a mysqlbackup.config file by coping the given template mysqlbackup.config.template, 
+open in your favorite editor and make changes:
+
+``` bash
+cp /root/myscript/mysqlbackup.sh/mysqlbackup.config.template /root/myscript/mysqlbackup.sh/mysqlbackup.config 
+
+nano /root/myscript/mysqlbackup.sh/mysqlbackup.config
+```
+
+
 If you want to run programmatically, add it to cronjobs manually or execute install script:
 
 ``` bash

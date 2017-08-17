@@ -22,7 +22,7 @@ if [[ -f $CONFIG_FILE ]]; then
    echo "Loading settings from $CONFIG_FILE."
    source $CONFIG_FILE
 else
-   echo "Could not load settings from $CONFIG_FILE (file does not exist), kill process use default settings."
+   echo "Could not load settings from $CONFIG_FILE (file does not exist), script use default settings."
 fi
 
 
