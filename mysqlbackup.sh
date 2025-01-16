@@ -15,11 +15,10 @@ MYSQLBIN="/usr/bin/mysql"
 MYSQLDUMPBIN="/usr/bin/mysqldump"
 INCLUDE_DATABASES=()
 
-# Nota. Verificare anche lo script app/Domain/DbDaImportare/AnonimizzaDbScript/Script/DbScriptPuliziaDati.sql e mantenere aggiornato
-EXCLUDE_TABLES_QUEUE=("queue_aggiornamento_account" "queue_aggiornamento_account_tag" "queue_aggiornamento_category" "queue_aggiornamento_com_color" "queue_aggiornamento_foto_articoli" "queue_aggiornamento_item_tag" "queue_aggiornamento_item_tag_header" "queue_aggiornamento_item_visibility" "queue_aggiornamento_itemproperty" "queue_aggiornamento_listini" "queue_aggiornamento_listini_deleted" "queue_aggiornamento_listini_updated" "queue_aggiornamento_traduzioni" "queue_messages_not_consumed")
-EXCLUDE_TABLES_LOG_CACHE_SERVIZIO=("cache_invalidation_event_associations" "cache_invalidation_events" "cache_invalidation_timestamps"  "articoli_listini_log"  "articoli_log"  "log_anonimizza_gdpdr_oblio"  "log_consensi_gpdr"  "log_finelinea"  "log_finelinea_request"  "log_mws_com"  "log_mws_order"  "log_services"  "log_sms"  "log_svuota_cache"  "pagamenti_gateway_log"  "spedizioni_log"  "telescope_entries"  "telescope_entries_tags"  "telescope_monitoring")
-EXCLUDE_TABLES_STORICO=("amazon_feeds_storico" "articoli_listini_storico" "articoli_prezzi_vendita_storico" "documenti_testa_attributi_dettaglio_storico" )
-EXCLUDE_TABLES_STATISTICHE=("pagamenti_statistiche" "clienti_statistiche")
+EXCLUDE_TABLES_QUEUE=()
+EXCLUDE_TABLES_LOG_CACHE_SERVIZIO=()
+EXCLUDE_TABLES_STORICO=()
+EXCLUDE_TABLES_STATISTICHE=()
 EXCLUDE_TABLES_CUSTOM=()
 EXCLUDE_TABLES=()
 
