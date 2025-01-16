@@ -7,7 +7,9 @@
 
 DBUSER="admin"
 DBPASS=`cat /etc/psa/.psa.shadow`
-DBOPTION="-f"
+DBOPTION="-f --routines --single-transaction --set-gtid-purged=OFF"
+DBPORT=3306
+DBHOST=""
 DEFPATH="/home/backup/"
 DATA=`/bin/date +"%a"`
 MYSQLBIN="/usr/bin/mysql"

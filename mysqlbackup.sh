@@ -127,7 +127,6 @@ for database in $DBNAMES; do
     rm -f "$DEFPATH/data/$database/$database-schema-$DATA.sql"
     echo "Dumping structure and data of $database ..."
     MYSQLDUMPCOMMAND="$MYSQLDUMPBIN $MYSQLCONFIG"
-    echo "Configurazione DB per export: $MYSQLDUMPCOMMAND"
 
     for table in "${EXCLUDE_TABLES[@]}"; do
         create_empty_schema "$database" "$table"
@@ -141,7 +140,6 @@ for database in $DBNAMES; do
 		
 		_now=$(date +%Y-%m-%d.%H.%M.%S)
 		echo "Backup db name $database starts at $_now"
-		echo "Executing: $MYSQLDUMPCOMMAND $DBOPTION $database > $DEFPATH/data/$database/$database-$DATA-dump.sql"
     $MYSQLDUMPCOMMAND $DBOPTION $EXCLUDE_PARAMS $database >  $DEFPATH/data/$database/$database-$DATA-dump.sql
 		
 		echo "Checking sql file..."
