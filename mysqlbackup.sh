@@ -19,12 +19,31 @@ EXCLUDE_TABLES_QUEUE=()
 EXCLUDE_TABLES_LOG_CACHE_SERVIZIO=()
 EXCLUDE_TABLES_STORICO=()
 EXCLUDE_TABLES_STATISTICHE=()
+EXCLUDE_TABLES_HOURLY=()
 EXCLUDE_TABLES_CUSTOM=()
 EXCLUDE_TABLES=()
+
+#
+# Load config file if exists
+#
+CONFIG_DIR=$( dirname "$(readlink -f "$0")" )
+CONFIG_FILE="$CONFIG_DIR/mysqlbackup.config"
+
+if [[ -f $CONFIG_FILE ]]; then
+   echo "Loading settings from $CONFIG_FILE."
+   source $CONFIG_FILE
+else
+   echo "Could not load settings from $CONFIG_FILE (file does not exist), script use default settings."
+fi
 
 # Verifico le opzioni inserite da linea di comando
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --hourly)
+            DATA="hourly$(date +%H)" # backup incrementale orario
+            EXCLUDE_TABLES+=("${EXCLUDE_TABLES_HOURLY[@]}") # Mantiene la lista predefinita
+            shift
+            ;;
         --databases)
             IFS=',' read -ra INCLUDE_DATABASES <<< "$2" # Split lista di database
             shift 2
@@ -60,18 +79,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-#
-# Load config file if exists
-#
-CONFIG_DIR=$( dirname "$(readlink -f "$0")" )
-CONFIG_FILE="$CONFIG_DIR/mysqlbackup.config"
-
-if [[ -f $CONFIG_FILE ]]; then
-   echo "Loading settings from $CONFIG_FILE."
-   source $CONFIG_FILE
-else
-   echo "Could not load settings from $CONFIG_FILE (file does not exist), script use default settings."
-fi
 
 MYSQLCOMMAND="$MYSQLBIN"
 MYSQLCONFIG=""
