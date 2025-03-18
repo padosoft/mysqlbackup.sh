@@ -109,76 +109,40 @@ if [[ ${#INCLUDE_DATABASES[@]} -gt 0 ]]; then
     echo "$DBNAMES"
 fi
 
-# Esporta solo le schema delle tabelle per le quali ho escluso i dati da linea di comando
-create_empty_schema() {
-    local database=$1
-    local table=$2
-    table_exists=$(echo "SHOW TABLES LIKE '$table'" | $MYSQLCOMMAND $database | grep -w "$table")
-
-    if [ -n "$table_exists" ]; then
-        echo "Dumping empty schema for table $table in database $database ..."
-        $MYSQLDUMPCOMMAND --no-data $database $table >> "$DEFPATH/data/$database/$database-schema-$DATA.sql"
-    else
-        echo "Skipping table $table in database $database because it does not exist."
-    fi
-}
 
 for database in $DBNAMES; do
-    if [ ! -d $DEFPATH/data/$database ]; then
-            echo "Making directory structure ..."
-            mkdir -p $DEFPATH/data/$database;
+    BACKUP_FILE="$DEFPATH/data/$database/$database-$DATA-dump.sql.gz"
+
+    if [ ! -d "$DEFPATH/data/$database" ]; then
+        echo "Making directory structure ..."
+        mkdir -p "$DEFPATH/data/$database"
     fi
 
-    echo "Removing old empty schema files for the same backup.."
-    #Dal momento che scrivo in append gli schemi delle tabelle rimuovo il file prima di scrivere
-    rm -f "$DEFPATH/data/$database/$database-schema-$DATA.sql"
-    echo "Dumping structure and data of $database ..."
-    MYSQLDUMPCOMMAND="$MYSQLDUMPBIN $MYSQLCONFIG"
+    echo "Backup db name $database starts at $(date +%Y-%m-%d.%H.%M.%S)"
 
-    for table in "${EXCLUDE_TABLES[@]}"; do
-        create_empty_schema "$database" "$table"
-    done
-
+    # Costruisce la lista di tabelle da escludere
     EXCLUDE_PARAMS=""
     for table in "${EXCLUDE_TABLES[@]}"; do
         EXCLUDE_PARAMS+=" --ignore-table=$database.$table"
     done
 
-		
-		_now=$(date +%Y-%m-%d.%H.%M.%S)
-		echo "Backup db name $database starts at $_now"
-    $MYSQLDUMPCOMMAND $DBOPTION $EXCLUDE_PARAMS $database >  $DEFPATH/data/$database/$database-$DATA-dump.sql
-		
-		echo "Checking sql file..."
-		if [ -s $DEFPATH/data/$database/$database-$DATA-dump.sql ] ; then
+    # Dump completo con schema per le tabelle escluse
+    {
+        for table in "${EXCLUDE_TABLES[@]}"; do
+            $MYSQLDUMPBIN $MYSQLCONFIG --no-data $database $table
+        done
+        $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION $EXCLUDE_PARAMS $database
+    } | gzip > "$BACKUP_FILE"
 
-  	  #Se esiste il file schema lo aggiungo al dump e lo elimino
-		  if [[ -f $DEFPATH/data/$database/$database-schema-$DATA.sql ]]; then
-		      echo "Adding tables with only schema to dump file"
-          cat "$DEFPATH/data/$database/$database-schema-$DATA.sql" >> "$DEFPATH/data/$database/$database-$DATA-dump.sql"
-          rm "$DEFPATH/data/$database/$database-schema-$DATA.sql"
-      else
-        echo "File non trovato $DEFPATH/data/$database/$database-schema-$DATA.sql"
-      fi
+    # Controllo se il backup è stato creato correttamente
+    if [ -s "$BACKUP_FILE" ]; then
+        echo "Backup completed successfully: $BACKUP_FILE"
+    else
+        echo "Backup failed: file does not exist or is empty, removing..."
+        rm -f "$BACKUP_FILE"
+    fi
 
-
-			echo "sql file is ok, exec gzip.."
-			/bin/gzip -f $DEFPATH/data/$database/$database-$DATA-dump.sql
-			
-			echo "Checking gz file..."
-			if [ -s $DEFPATH/data/$database/$database-$DATA-dump.sql.gz ] ; then
-				echo ".gz file is ok"
-			else
-				echo ".gz file doesn't exists or has zero bytes, remove it"
-				rm -f $DEFPATH/data/$database/$database-$DATA-dump.sql.gz
-			fi	
-		else
-			echo "sql file doesn't exists or has zero bytes, remove it"
-			rm -f $DEFPATH/data/$database/$database-$DATA-dump.sql
-		fi	
-		
-		_now=$(date +%Y-%m-%d.%H.%M.%S)
-		echo "Backup db name $database finish at $_now"
+    echo "Backup db name $database finish at $(date +%Y-%m-%d.%H.%M.%S)"
 done
 
 _now=$(date +%Y-%m-%d.%H.%M.%S)
