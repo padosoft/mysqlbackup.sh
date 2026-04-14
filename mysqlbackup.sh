@@ -17,6 +17,9 @@ INCLUDE_DATABASES=()
 CREATE_DATABASE_TEST=false
 TEST_DATABASE_NAME=""
 SQL_SCRIPTS_DIR=""
+GDRIVE_SERVICE_ACCOUNT_JSON=""
+GDRIVE_FOLDER_ID=""
+GDRIVE_MAX_SIZE_MB=0
 
 EXCLUDE_TABLES_QUEUE=()
 EXCLUDE_TABLES_LOG_CACHE_SERVIZIO=()
@@ -133,6 +136,79 @@ if [ "$DBHOST" != "" ]; then
 fi
 
 MYSQLCOMMAND+="$MYSQLCONFIG"
+
+#
+# Funzioni per upload su Google Drive via Service Account
+#
+
+# Ottiene un access token OAuth2 dal Service Account JSON usando JWT firmato con openssl
+get_gdrive_token() {
+    # Estrae i campi dal JSON del service account
+    local client_email=$(grep '"client_email"' "$GDRIVE_SERVICE_ACCOUNT_JSON" | sed 's/.*: *"\(.*\)".*/\1/')
+    local token_uri=$(grep '"token_uri"' "$GDRIVE_SERVICE_ACCOUNT_JSON" | sed 's/.*: *"\(.*\)".*/\1/')
+
+    # Estrae la private key (campo multilinea con \n)
+    local private_key=$(sed -n '/private_key/,/-----END/p' "$GDRIVE_SERVICE_ACCOUNT_JSON" | sed 's/.*: *"//;s/",*$//' | sed 's/\\n/\n/g')
+
+    # JWT header e claim
+    local now=$(date +%s)
+    local exp=$((now + 3600))
+    local header='{"alg":"RS256","typ":"JWT"}'
+    local claim="{\"iss\":\"$client_email\",\"scope\":\"https://www.googleapis.com/auth/drive.file\",\"aud\":\"$token_uri\",\"iat\":$now,\"exp\":$exp}"
+
+    # Base64url encoding
+    local b64_header=$(echo -n "$header" | openssl base64 -e | tr -d '=\n' | tr '+/' '-_')
+    local b64_claim=$(echo -n "$claim" | openssl base64 -e | tr -d '=\n' | tr '+/' '-_')
+
+    # Firma RSA-SHA256 con la private key del service account
+    local signature=$(echo -n "$b64_header.$b64_claim" | openssl dgst -sha256 -sign <(echo "$private_key") | openssl base64 -e | tr -d '=\n' | tr '+/' '-_')
+
+    local jwt="$b64_header.$b64_claim.$signature"
+
+    # Scambia il JWT per un access token
+    local response=$(curl -s -X POST "$token_uri" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=$jwt")
+
+    echo "$response" | grep -o '"access_token" *: *"[^"]*"' | sed 's/.*: *"\(.*\)"/\1/'
+}
+
+# Carica un file su Google Drive con controllo dimensione massima
+upload_to_gdrive() {
+    local file_path="$1"
+    local file_name=$(basename "$file_path")
+
+    # Controllo dimensione massima
+    if [ "$GDRIVE_MAX_SIZE_MB" -gt 0 ]; then
+        local file_size_mb=$(( $(stat -c%s "$file_path" 2>/dev/null || stat -f%z "$file_path") / 1048576 ))
+        if [ "$file_size_mb" -gt "$GDRIVE_MAX_SIZE_MB" ]; then
+            echo "Warning: file $file_name ($file_size_mb MB) supera il limite di $GDRIVE_MAX_SIZE_MB MB, upload skippato"
+            return 0
+        fi
+    fi
+
+    # Ottieni access token dal service account
+    local token=$(get_gdrive_token)
+    if [ -z "$token" ]; then
+        echo "Errore: impossibile ottenere access token per Google Drive"
+        return 1
+    fi
+
+    # Upload via API Google Drive (multipart upload)
+    echo "Uploading $file_name to Google Drive..."
+    local response=$(curl -s -X POST \
+        -H "Authorization: Bearer $token" \
+        -F "metadata={\"name\":\"$file_name\",\"parents\":[\"$GDRIVE_FOLDER_ID\"]};type=application/json;charset=UTF-8" \
+        -F "file=@$file_path;type=application/gzip" \
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart")
+
+    if echo "$response" | grep -q '"id"'; then
+        echo "Upload completed: $file_name"
+    else
+        echo "Errore upload Google Drive: $response"
+        return 1
+    fi
+}
 
 echo "retrieve databases..."
 echo $MYSQLCOMMAND
@@ -256,6 +332,13 @@ if [ "$CREATE_DATABASE_TEST" = true ]; then
     else
         echo "Errore: export del database di test fallito o vuoto"
         rm -f "$BACKUP_FILE_TEST"
+    fi
+
+    # Step 6: Upload su Google Drive (se configurato)
+    if [ -n "$GDRIVE_SERVICE_ACCOUNT_JSON" ] && [ -n "$GDRIVE_FOLDER_ID" ]; then
+        if [ -s "$BACKUP_FILE_TEST" ]; then
+            upload_to_gdrive "$BACKUP_FILE_TEST"
+        fi
     fi
 
     # Cleanup: rimuove il file .sql temporaneo

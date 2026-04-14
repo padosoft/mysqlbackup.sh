@@ -23,3 +23,8 @@ EXCLUDE_TABLES_HOURLY=()
 # Test database settings
 TEST_DATABASE_NAME=""
 SQL_SCRIPTS_DIR=""  # Default: sql_script_for_test_db/ nella directory dello script
+
+# Google Drive upload settings
+GDRIVE_SERVICE_ACCOUNT_JSON=""  # Path al file JSON del service account
+GDRIVE_FOLDER_ID=""             # ID della cartella di destinazione su Google Drive
+GDRIVE_MAX_SIZE_MB=0            # Dimensione massima in MB (0 = nessun limite)
