@@ -14,6 +14,9 @@ DATA=`/bin/date +"%a"`
 MYSQLBIN="/usr/bin/mysql"
 MYSQLDUMPBIN="/usr/bin/mysqldump"
 INCLUDE_DATABASES=()
+CREATE_DATABASE_TEST=false
+TEST_DATABASE_NAME=""
+SQL_SCRIPTS_DIR=""
 
 EXCLUDE_TABLES_QUEUE=()
 EXCLUDE_TABLES_LOG_CACHE_SERVIZIO=()
@@ -68,6 +71,10 @@ while [[ $# -gt 0 ]]; do
             IFS=',' read -ra EXCLUDE_TABLES <<< "$2"
             shift 2
             ;;
+        --create-database-test)
+            CREATE_DATABASE_TEST=true
+            shift
+            ;;
         --escludi_tutte)
             EXCLUDE_TABLES=("${EXCLUDE_TABLES_QUEUE[@]}" "${EXCLUDE_TABLES_LOG_CACHE_SERVIZIO[@]}" "${EXCLUDE_TABLES_STORICO[@]}" "${EXCLUDE_TABLES_STATISTICHE[@]}")
             shift
@@ -79,6 +86,33 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+
+#
+# Validazione --create-database-test
+# Richiede: esattamente 1 database via --databases, TEST_DATABASE_NAME configurato e diverso dal db di produzione
+#
+if [ "$CREATE_DATABASE_TEST" = true ]; then
+    if [ ${#INCLUDE_DATABASES[@]} -ne 1 ]; then
+        echo "Errore: --create-database-test richiede --databases con esattamente 1 database"
+        exit 1
+    fi
+    if [ -z "$TEST_DATABASE_NAME" ]; then
+        echo "Errore: TEST_DATABASE_NAME non configurato in $CONFIG_FILE"
+        exit 1
+    fi
+    # Evita di sovrascrivere il database di produzione
+    if [ "$TEST_DATABASE_NAME" = "${INCLUDE_DATABASES[0]}" ]; then
+        echo "Errore: TEST_DATABASE_NAME deve essere diverso dal database di produzione"
+        exit 1
+    fi
+    # Default per la directory degli script SQL di trasformazione
+    if [ -z "$SQL_SCRIPTS_DIR" ]; then
+        SQL_SCRIPTS_DIR="$CONFIG_DIR/sql_script_for_test_db"
+    fi
+    if [ ! -d "$SQL_SCRIPTS_DIR" ]; then
+        echo "Warning: directory $SQL_SCRIPTS_DIR non trovata, nessuno script SQL verra' eseguito"
+    fi
+fi
 
 MYSQLCOMMAND="$MYSQLBIN"
 MYSQLCONFIG=""
@@ -144,6 +178,91 @@ for database in $DBNAMES; do
 
     echo "Backup db name $database finish at $(date +%Y-%m-%d.%H.%M.%S)"
 done
+
+#
+# Creazione database di test a partire dal database di produzione
+# Flusso: dump prod -> import in test db -> esecuzione script SQL di trasformazione -> export test db
+#
+if [ "$CREATE_DATABASE_TEST" = true ]; then
+    database="${INCLUDE_DATABASES[0]}"
+    echo ""
+    echo "=== Create test database starts at $(date +%Y-%m-%d.%H.%M.%S) ==="
+    echo "Source database: $database"
+    echo "Test database: $TEST_DATABASE_NAME"
+
+    if [ ! -d "$DEFPATH/data/$database" ]; then
+        mkdir -p "$DEFPATH/data/$database"
+    fi
+
+    # Costruisce la lista di tabelle da escludere (stessa logica del backup standard)
+    EXCLUDE_PARAMS=""
+    for table in "${EXCLUDE_TABLES[@]}"; do
+        EXCLUDE_PARAMS+=" --ignore-table=$database.$table"
+    done
+
+    # Step 1: Dump del database di produzione in un file .sql temporaneo (non compresso per l'import diretto)
+    TEMP_SQL_FILE="$DEFPATH/data/$database/${database}_export_db-$DATA-dump.sql"
+    echo "Dumping production database $database to temp file..."
+    {
+        for table in "${EXCLUDE_TABLES[@]}"; do
+            $MYSQLDUMPBIN $MYSQLCONFIG --no-data $database $table
+        done
+        $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION $EXCLUDE_PARAMS $database
+    } > "$TEMP_SQL_FILE"
+
+    if [ ! -s "$TEMP_SQL_FILE" ]; then
+        echo "Errore: dump del database di produzione fallito o vuoto"
+        rm -f "$TEMP_SQL_FILE"
+        exit 1
+    fi
+    echo "Dump completed: $TEMP_SQL_FILE"
+
+    # Step 2: Drop di tutte le tabelle e viste nel database di test
+    # Disabilita FK per evitare errori di dipendenza tra tabelle
+    echo "Cleaning test database $TEST_DATABASE_NAME..."
+    $MYSQLCOMMAND $TEST_DATABASE_NAME -e "SET FOREIGN_KEY_CHECKS=0"
+
+    TABLES=$($MYSQLCOMMAND $TEST_DATABASE_NAME -e "SHOW TABLES" -N)
+    for table in $TABLES; do
+        $MYSQLCOMMAND $TEST_DATABASE_NAME -e "DROP TABLE IF EXISTS \`$table\`"
+    done
+
+    VIEWS=$($MYSQLCOMMAND $TEST_DATABASE_NAME -e "SHOW FULL TABLES WHERE Table_type='VIEW'" -N | awk '{print $1}')
+    for view in $VIEWS; do
+        $MYSQLCOMMAND $TEST_DATABASE_NAME -e "DROP VIEW IF EXISTS \`$view\`"
+    done
+
+    $MYSQLCOMMAND $TEST_DATABASE_NAME -e "SET FOREIGN_KEY_CHECKS=1"
+
+    # Step 3: Import del dump nel database di test
+    echo "Importing dump into test database $TEST_DATABASE_NAME..."
+    $MYSQLBIN $MYSQLCONFIG $TEST_DATABASE_NAME < "$TEMP_SQL_FILE"
+
+    # Step 4: Esecuzione degli script SQL di trasformazione (in ordine alfabetico/numerico)
+    if [ -d "$SQL_SCRIPTS_DIR" ]; then
+        for script in $(ls "$SQL_SCRIPTS_DIR"/*.sql 2>/dev/null | sort); do
+            echo "Executing SQL script: $script"
+            $MYSQLBIN $MYSQLCONFIG $TEST_DATABASE_NAME < "$script"
+        done
+    fi
+
+    # Step 5: Export finale del database di test (compresso con gzip)
+    BACKUP_FILE_TEST="$DEFPATH/data/$database/${database}_test_db-$DATA-dump.sql.gz"
+    echo "Exporting test database $TEST_DATABASE_NAME..."
+    $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION $TEST_DATABASE_NAME | gzip > "$BACKUP_FILE_TEST"
+
+    if [ -s "$BACKUP_FILE_TEST" ]; then
+        echo "Test database export completed: $BACKUP_FILE_TEST"
+    else
+        echo "Errore: export del database di test fallito o vuoto"
+        rm -f "$BACKUP_FILE_TEST"
+    fi
+
+    # Cleanup: rimuove il file .sql temporaneo
+    rm -f "$TEMP_SQL_FILE"
+
+    echo "=== Create test database finish at $(date +%Y-%m-%d.%H.%M.%S) ==="
+fi
 
 _now=$(date +%Y-%m-%d.%H.%M.%S)
 echo "Finish at $_now"
