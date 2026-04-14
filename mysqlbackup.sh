@@ -174,9 +174,10 @@ get_gdrive_token() {
 }
 
 # Carica un file su Google Drive con controllo dimensione massima
+# Parametri: $1 = path del file, $2 = nome del file su Drive (opzionale, default = basename)
 upload_to_gdrive() {
     local file_path="$1"
-    local file_name=$(basename "$file_path")
+    local file_name="${2:-$(basename "$file_path")}"
 
     # Controllo dimensione massima
     if [ "$GDRIVE_MAX_SIZE_MB" -gt 0 ]; then
@@ -335,9 +336,11 @@ if [ "$CREATE_DATABASE_TEST" = true ]; then
     fi
 
     # Step 6: Upload su Google Drive (se configurato)
+    # Il file su Drive si chiama nomedbprod_YYYY-MM-DD.sql.gz
     if [ -n "$GDRIVE_SERVICE_ACCOUNT_JSON" ] && [ -n "$GDRIVE_FOLDER_ID" ]; then
         if [ -s "$BACKUP_FILE_TEST" ]; then
-            upload_to_gdrive "$BACKUP_FILE_TEST"
+            GDRIVE_FILE_NAME="${database}_$(date +%Y-%m-%d).sql.gz"
+            upload_to_gdrive "$BACKUP_FILE_TEST" "$GDRIVE_FILE_NAME"
         fi
     fi
 
