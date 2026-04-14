@@ -221,6 +221,8 @@ if [[ ${#INCLUDE_DATABASES[@]} -gt 0 ]]; then
 fi
 
 
+# Skip del backup standard se si sta creando il database di test
+if [ "$CREATE_DATABASE_TEST" != true ]; then
 for database in $DBNAMES; do
     BACKUP_FILE="$DEFPATH/data/$database/$database-$DATA-dump.sql.gz"
 
@@ -255,6 +257,7 @@ for database in $DBNAMES; do
 
     echo "Backup db name $database finish at $(date +%Y-%m-%d.%H.%M.%S)"
 done
+fi
 
 #
 # Creazione database di test a partire dal database di produzione
