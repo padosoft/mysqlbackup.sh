@@ -23,6 +23,7 @@ GDRIVE_REFRESH_TOKEN=""
 GDRIVE_FOLDER_ID=""
 GDRIVE_MAX_SIZE_MB=0
 GDRIVE_KEEP_FILES=0             # Numero di file da mantenere su Drive per ogni db (0 = nessun pruning)
+LOCK_TIMEOUT_MINUTES=120        # Timeout del lock file in minuti (default 2 ore), dopo il quale viene eliminato con warning
 
 EXCLUDE_TABLES_QUEUE=()
 EXCLUDE_TABLES_LOG_CACHE_SERVIZIO=()
@@ -44,6 +45,30 @@ if [[ -f $CONFIG_FILE ]]; then
 else
    echo "Could not load settings from $CONFIG_FILE (file does not exist), script use default settings."
 fi
+
+#
+# Lock file: impedisce esecuzioni concorrenti dello script
+# Se il lock esiste ed e' piu' vecchio di LOCK_TIMEOUT_MINUTES, viene eliminato con warning
+#
+LOCK_FILE="$CONFIG_DIR/mysqlbackup.lock"
+
+if [ -f "$LOCK_FILE" ]; then
+    # Calcola l'eta' del lock file in minuti
+    lock_age_seconds=$(( $(date +%s) - $(date -r "$LOCK_FILE" +%s 2>/dev/null || stat -c %Y "$LOCK_FILE") ))
+    lock_age_minutes=$(( lock_age_seconds / 60 ))
+
+    if [ $lock_age_minutes -ge $LOCK_TIMEOUT_MINUTES ]; then
+        echo "Warning: lock file presente da $lock_age_minutes minuti (timeout: $LOCK_TIMEOUT_MINUTES min), eliminazione forzata"
+        rm -f "$LOCK_FILE"
+    else
+        echo "Errore: un'altra istanza di mysqlbackup.sh e' gia' in esecuzione (lock file: $LOCK_FILE, eta': $lock_age_minutes min)"
+        exit 1
+    fi
+fi
+
+# Crea il lock file e registra la rimozione automatica all'uscita (anche in caso di errore)
+echo "$$" > "$LOCK_FILE"
+trap "rm -f '$LOCK_FILE'" EXIT
 
 # Verifico le opzioni inserite da linea di comando
 while [[ $# -gt 0 ]]; do

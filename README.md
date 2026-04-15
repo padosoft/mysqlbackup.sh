@@ -12,6 +12,7 @@ Table of Contents
   * [Usage](#usage)
   * [Create test database](#create-test-database)
   * [Google Drive upload](#google-drive-upload)
+  * [Lock file](#lock-file)
   * [Configuration reference](#configuration-reference)
   * [Contributing](#contributing)
   * [Credits](#credits)
@@ -174,6 +175,14 @@ The uploaded file is named `<database>_YYYY-MM-DD.sql.gz`.
 
 When `GDRIVE_KEEP_FILES` is set to a value greater than 0, old files are automatically deleted from Google Drive after each upload. Files are matched by database name prefix and sorted by creation date. Only the most recent N files are kept.
 
+# Lock file
+
+The script creates a `mysqlbackup.lock` file to prevent concurrent executions. If the script is already running, a second instance will exit with an error.
+
+If the lock file is older than `LOCK_TIMEOUT_MINUTES` (default: 120 minutes / 2 hours), it is considered stale and automatically removed with a warning. This handles cases where a previous run crashed without cleaning up.
+
+The lock file is automatically removed on exit (including errors) via a `trap`.
+
 # Configuration reference
 
 | Variable | Default | Description |
@@ -199,6 +208,7 @@ When `GDRIVE_KEEP_FILES` is set to a value greater than 0, old files are automat
 | `GDRIVE_FOLDER_ID` | (empty) | Google Drive destination folder ID |
 | `GDRIVE_MAX_SIZE_MB` | `0` | Max file size in MB for upload (0 = no limit) |
 | `GDRIVE_KEEP_FILES` | `0` | Files to keep per db on Drive (0 = no pruning) |
+| `LOCK_TIMEOUT_MINUTES` | `120` | Lock file timeout in minutes before forced removal |
 
 # Contributing
 
