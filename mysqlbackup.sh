@@ -230,11 +230,11 @@ prune_gdrive_files() {
         "https://www.googleapis.com/drive/v3/files?q='$GDRIVE_FOLDER_ID'+in+parents+and+name+contains+'${file_prefix}'+and+trashed=false&orderBy=createdTime+desc&fields=files(id,name,createdTime)&pageSize=100")
 
     # Parsing dei risultati: estrae coppie id/name e salta i primi N (da mantenere)
-    local count=0
+    # Usa process substitution per evitare subshell (le variabili devono persistere tra iterazioni)
     local i=0
     local current_id=""
 
-    echo "$response" | grep -o '"id": *"[^"]*"\|"name": *"[^"]*"' | sed 's/.*: *"\(.*\)"/\1/' | while read -r value; do
+    while read -r value; do
         if [ -z "$current_id" ]; then
             # Primo valore della coppia: id
             current_id="$value"
@@ -248,7 +248,7 @@ prune_gdrive_files() {
             fi
             current_id=""
         fi
-    done
+    done < <(echo "$response" | grep -o '"id": *"[^"]*"\|"name": *"[^"]*"' | sed 's/.*: *"\(.*\)"/\1/')
 }
 
 echo "retrieve databases..."
