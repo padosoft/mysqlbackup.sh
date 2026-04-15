@@ -22,6 +22,7 @@ GDRIVE_CLIENT_SECRET=""
 GDRIVE_REFRESH_TOKEN=""
 GDRIVE_FOLDER_ID=""
 GDRIVE_MAX_SIZE_MB=0
+GDRIVE_KEEP_FILES=0             # Numero di file da mantenere su Drive per ogni db (0 = nessun pruning)
 
 EXCLUDE_TABLES_QUEUE=()
 EXCLUDE_TABLES_LOG_CACHE_SERVIZIO=()
@@ -189,20 +190,65 @@ upload_to_gdrive() {
         return 1
     fi
 
-    # Upload del contenuto
+    # Upload del contenuto e richiesta dei campi size per verifica
     local file_size=$(stat -c%s "$file_path" 2>/dev/null || stat -f%z "$file_path")
     local response=$(curl -s -X PUT \
         -H "Content-Length: $file_size" \
         -H "Content-Type: application/gzip" \
         --data-binary "@$file_path" \
-        "$upload_url")
+        "${upload_url}&fields=id,name,size")
 
-    if echo "$response" | grep -q '"id"'; then
-        echo "Upload completed: $file_name"
-    else
+    if ! echo "$response" | grep -q '"id"'; then
         echo "Errore upload Google Drive: $response"
         return 1
     fi
+
+    # Verifica che il file caricato non sia vuoto
+    local remote_size=$(echo "$response" | grep -o '"size" *: *"[^"]*"' | sed 's/.*: *"\(.*\)"/\1/')
+    if [ -n "$remote_size" ] && [ "$remote_size" = "0" ]; then
+        echo "Errore: il file caricato su Google Drive risulta vuoto (0 bytes)"
+        return 1
+    fi
+    echo "Upload completed: $file_name ($remote_size bytes)"
+}
+
+# Rimuove i file piu' vecchi su Google Drive, mantenendo solo gli ultimi N per ogni database
+# Il matching e' basato sul prefisso del nome db (es. "gescat_gianni_") escludendo la data
+# Parametri: $1 = prefisso del nome file (es. "gescat_gianni_"), $2 = numero di file da mantenere
+prune_gdrive_files() {
+    local file_prefix="$1"
+    local keep_count="$2"
+
+    local token=$(get_gdrive_token)
+    if [ -z "$token" ]; then
+        echo "Errore: impossibile ottenere access token per pruning Google Drive"
+        return 1
+    fi
+
+    # Cerca tutti i file nella cartella che matchano il prefisso, ordinati per data creazione decrescente
+    local response=$(curl -s -H "Authorization: Bearer $token" \
+        "https://www.googleapis.com/drive/v3/files?q='$GDRIVE_FOLDER_ID'+in+parents+and+name+contains+'${file_prefix}'+and+trashed=false&orderBy=createdTime+desc&fields=files(id,name,createdTime)&pageSize=100")
+
+    # Parsing dei risultati: estrae coppie id/name e salta i primi N (da mantenere)
+    local count=0
+    local i=0
+    local current_id=""
+
+    echo "$response" | grep -o '"id": *"[^"]*"\|"name": *"[^"]*"' | sed 's/.*: *"\(.*\)"/\1/' | while read -r value; do
+        if [ -z "$current_id" ]; then
+            # Primo valore della coppia: id
+            current_id="$value"
+        else
+            # Secondo valore della coppia: name
+            i=$((i + 1))
+            if [ $i -gt $keep_count ]; then
+                echo "Pruning: eliminazione $value da Google Drive..."
+                curl -s -X DELETE -H "Authorization: Bearer $token" \
+                    "https://www.googleapis.com/drive/v3/files/$current_id" > /dev/null
+            fi
+            current_id=""
+        fi
+    done
 }
 
 echo "retrieve databases..."
@@ -274,15 +320,38 @@ if [ "$CREATE_DATABASE_TEST" = true ]; then
         EXCLUDE_PARAMS+=" --ignore-table=$database.$table"
     done
 
-    # Step 1: Dump del database di produzione in un file .sql temporaneo (non compresso per l'import diretto)
-    TEMP_SQL_FILE="$DEFPATH/data/$database/${database}_export_db-$DATA-dump.sql"
+    #
+    # Step 1: Dump del database di produzione in un file temporaneo
+    # Se gzip e' disponibile comprime il dump per risparmiare spazio su disco
+    #
+    if command -v gzip &> /dev/null; then
+        TEMP_SQL_FILE="$DEFPATH/data/$database/${database}_export_db-$DATA-dump.sql.gz"
+        TEMP_USE_GZIP=true
+        echo "gzip disponibile, il dump intermedio sara' compresso"
+    else
+        TEMP_SQL_FILE="$DEFPATH/data/$database/${database}_export_db-$DATA-dump.sql"
+        TEMP_USE_GZIP=false
+        echo "gzip non disponibile, il dump intermedio sara' in chiaro"
+    fi
+
     echo "Dumping production database $database to temp file..."
-    {
-        for table in "${EXCLUDE_TABLES[@]}"; do
-            $MYSQLDUMPBIN $MYSQLCONFIG --no-data $database $table
-        done
-        $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION $EXCLUDE_PARAMS $database
-    } > "$TEMP_SQL_FILE"
+    if [ "$TEMP_USE_GZIP" = true ]; then
+        # Dump compresso: pipe diretta a gzip
+        {
+            for table in "${EXCLUDE_TABLES[@]}"; do
+                $MYSQLDUMPBIN $MYSQLCONFIG --no-data $database $table
+            done
+            $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION $EXCLUDE_PARAMS $database
+        } | gzip > "$TEMP_SQL_FILE"
+    else
+        # Dump non compresso
+        {
+            for table in "${EXCLUDE_TABLES[@]}"; do
+                $MYSQLDUMPBIN $MYSQLCONFIG --no-data $database $table
+            done
+            $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION $EXCLUDE_PARAMS $database
+        } > "$TEMP_SQL_FILE"
+    fi
 
     if [ ! -s "$TEMP_SQL_FILE" ]; then
         echo "Errore: dump del database di produzione fallito o vuoto"
@@ -309,8 +378,13 @@ if [ "$CREATE_DATABASE_TEST" = true ]; then
     $MYSQLCOMMAND $TEST_DATABASE_NAME -e "SET FOREIGN_KEY_CHECKS=1"
 
     # Step 3: Import del dump nel database di test
+    # Se il dump e' compresso, decomprime al volo con gunzip durante l'import
     echo "Importing dump into test database $TEST_DATABASE_NAME..."
-    $MYSQLBIN $MYSQLCONFIG $TEST_DATABASE_NAME < "$TEMP_SQL_FILE"
+    if [ "$TEMP_USE_GZIP" = true ]; then
+        gunzip -c "$TEMP_SQL_FILE" | $MYSQLBIN $MYSQLCONFIG $TEST_DATABASE_NAME
+    else
+        $MYSQLBIN $MYSQLCONFIG $TEST_DATABASE_NAME < "$TEMP_SQL_FILE"
+    fi
 
     # Step 4: Esecuzione degli script SQL di trasformazione (in ordine alfabetico/numerico)
     if [ -d "$SQL_SCRIPTS_DIR" ]; then
@@ -338,6 +412,12 @@ if [ "$CREATE_DATABASE_TEST" = true ]; then
         if [ -s "$BACKUP_FILE_TEST" ]; then
             GDRIVE_FILE_NAME="${database}_$(date +%Y-%m-%d).sql.gz"
             upload_to_gdrive "$BACKUP_FILE_TEST" "$GDRIVE_FILE_NAME"
+
+            # Step 7: Pruning dei file vecchi su Drive (se configurato)
+            # Mantiene solo gli ultimi N file per questo database, basandosi sul prefisso "nomedb_"
+            if [ "$GDRIVE_KEEP_FILES" -gt 0 ] 2>/dev/null; then
+                prune_gdrive_files "${database}_" "$GDRIVE_KEEP_FILES"
+            fi
         fi
     fi
 
