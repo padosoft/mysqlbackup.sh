@@ -23,7 +23,7 @@ Table of Contents
 - bash
 - mysql / mysqldump
 - curl (required for Google Drive upload)
-- gzip (optional, used for compressed intermediate dumps)
+- gzip (required for `--create-database-test`; otherwise used for compressed intermediate dumps)
 
 # Install
 

@@ -460,6 +460,11 @@ if [ "$CREATE_DATABASE_TEST" = true ]; then
     # Step 5: Export finale del database di test (compresso con gzip)
     BACKUP_FILE_TEST="$DEFPATH/data/$database/${database}_test_db-$DATA-dump.sql.gz"
     echo "Exporting test database $TEST_DATABASE_NAME..."
+    if ! command -v gzip > /dev/null 2>&1; then
+        echo "Errore: gzip non installato. --create-database-test richiede gzip per l'export finale compresso."
+        rm -f "$TEMP_SQL_FILE"
+        exit 1
+    fi
     $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION $TEST_DATABASE_NAME | gzip > "$BACKUP_FILE_TEST"
 
     if [ -s "$BACKUP_FILE_TEST" ]; then
