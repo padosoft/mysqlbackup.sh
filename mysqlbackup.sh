@@ -210,10 +210,10 @@ MYSQLCOMMAND+="$MYSQLCONFIG"
 # Ottiene un access token OAuth2 dal refresh token
 get_gdrive_token() {
     local response=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
-        -d "client_id=$GDRIVE_CLIENT_ID" \
-        -d "client_secret=$GDRIVE_CLIENT_SECRET" \
-        -d "refresh_token=$GDRIVE_REFRESH_TOKEN" \
-        -d "grant_type=refresh_token")
+        --data-urlencode "client_id=$GDRIVE_CLIENT_ID" \
+        --data-urlencode "client_secret=$GDRIVE_CLIENT_SECRET" \
+        --data-urlencode "refresh_token=$GDRIVE_REFRESH_TOKEN" \
+        --data-urlencode "grant_type=refresh_token")
 
     echo "$response" | grep -o '"access_token" *: *"[^"]*"' | sed 's/.*: *"\(.*\)"/\1/'
 }
