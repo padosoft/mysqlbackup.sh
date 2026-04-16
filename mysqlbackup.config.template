@@ -19,3 +19,16 @@ EXCLUDE_TABLES_LOG_CACHE_SERVIZIO=()
 EXCLUDE_TABLES_STORICO=()
 EXCLUDE_TABLES_STATISTICHE=()
 EXCLUDE_TABLES_HOURLY=()
+
+# Test database settings
+TEST_DATABASE_NAME=""
+SQL_SCRIPTS_DIR=""  # Default: sql_script_for_test_db/ nella directory dello script
+
+# Google Drive upload settings (OAuth2)
+GDRIVE_CLIENT_ID=""             # OAuth2 Client ID
+GDRIVE_CLIENT_SECRET=""         # OAuth2 Client Secret
+GDRIVE_REFRESH_TOKEN=""         # OAuth2 Refresh Token (ottenuto una tantum via browser)
+GDRIVE_FOLDER_ID=""             # ID della cartella di destinazione su Google Drive
+GDRIVE_MAX_SIZE_MB=0            # Dimensione massima in MB (0 = nessun limite)
+GDRIVE_KEEP_FILES=0             # Numero di file da mantenere su Drive per ogni db (0 = nessun pruning)
+LOCK_TIMEOUT_MINUTES=120        # Timeout del lock file in minuti (default 2 ore)
