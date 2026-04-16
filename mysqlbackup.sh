@@ -225,7 +225,7 @@ upload_to_gdrive() {
     local file_name="${2:-$(basename "$file_path")}"
 
     # Controllo dimensione massima
-    if [ "$GDRIVE_MAX_SIZE_MB" -gt 0 ]; then
+    if [[ "$GDRIVE_MAX_SIZE_MB" =~ ^[0-9]+$ ]] && [ "$GDRIVE_MAX_SIZE_MB" -gt 0 ]; then
         local file_size_mb=$(( $(stat -c%s "$file_path" 2>/dev/null || stat -f%z "$file_path") / 1048576 ))
         if [ "$file_size_mb" -gt "$GDRIVE_MAX_SIZE_MB" ]; then
             echo "Warning: file $file_name ($file_size_mb MB) supera il limite di $GDRIVE_MAX_SIZE_MB MB, upload skippato"
