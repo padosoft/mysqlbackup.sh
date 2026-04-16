@@ -451,7 +451,7 @@ if [ "$CREATE_DATABASE_TEST" = true ]; then
 
     # Step 4: Esecuzione degli script SQL di trasformazione (in ordine alfabetico/numerico)
     if [ -d "$SQL_SCRIPTS_DIR" ]; then
-        for script in $(ls "$SQL_SCRIPTS_DIR"/*.sql 2>/dev/null | sort); do
+        find "$SQL_SCRIPTS_DIR" -maxdepth 1 -type f -name "*.sql" -print0 | sort -z | while IFS= read -r -d '' script; do
             echo "Executing SQL script: $script"
             $MYSQLBIN $MYSQLCONFIG $TEST_DATABASE_NAME < "$script"
         done
