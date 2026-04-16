@@ -1,6 +1,6 @@
 
 # mysqlbackup.sh
-Bash script to daily backup all your MySQL databases in gzip with weekly history.
+Bash script to daily backup all your mysql/mariadb database in gzip or Gdrive with weekly history.
 
 [![Software License][ico-license]](LICENSE.md)
 
