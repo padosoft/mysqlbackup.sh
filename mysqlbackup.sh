@@ -52,12 +52,36 @@ fi
 #
 LOCK_FILE="$CONFIG_DIR/mysqlbackup.lock"
 
+# Restituisce mtime epoch di un file in modo cross-platform (GNU stat -> BSD stat)
+get_file_mtime_epoch() {
+    local file="$1"
+    local mtime=""
+
+    mtime=$(stat -c %Y "$file" 2>/dev/null) || mtime=""
+    if [[ -z "$mtime" ]]; then
+        mtime=$(stat -f %m "$file" 2>/dev/null) || mtime=""
+    fi
+
+    if [[ "$mtime" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$mtime"
+        return 0
+    fi
+
+    return 1
+}
+
 if [ -f "$LOCK_FILE" ]; then
     # Calcola l'eta' del lock file in minuti
-    lock_age_seconds=$(( $(date +%s) - $(date -r "$LOCK_FILE" +%s 2>/dev/null || stat -c %Y "$LOCK_FILE") ))
+    lock_mtime=$(get_file_mtime_epoch "$LOCK_FILE")
+    if [[ ! "$lock_mtime" =~ ^[0-9]+$ ]]; then
+        echo "Errore: impossibile determinare l'eta' del lock file in modo portabile (lock file: $LOCK_FILE)"
+        exit 1
+    fi
+
+    lock_age_seconds=$(( $(date +%s) - lock_mtime ))
     lock_age_minutes=$(( lock_age_seconds / 60 ))
 
-    if [ $lock_age_minutes -ge $LOCK_TIMEOUT_MINUTES ]; then
+    if [ "$lock_age_minutes" -ge "$LOCK_TIMEOUT_MINUTES" ]; then
         echo "Warning: lock file presente da $lock_age_minutes minuti (timeout: $LOCK_TIMEOUT_MINUTES min), eliminazione forzata"
         rm -f "$LOCK_FILE"
     else
