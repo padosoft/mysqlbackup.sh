@@ -428,14 +428,14 @@ if [ "$CREATE_DATABASE_TEST" = true ]; then
     echo "Cleaning test database $TEST_DATABASE_NAME..."
     $MYSQLCOMMAND $TEST_DATABASE_NAME -e "SET FOREIGN_KEY_CHECKS=0"
 
-    TABLES=$($MYSQLCOMMAND $TEST_DATABASE_NAME -e "SHOW TABLES" -N)
-    for table in $TABLES; do
-        $MYSQLCOMMAND $TEST_DATABASE_NAME -e "DROP TABLE IF EXISTS \`$table\`"
-    done
-
     VIEWS=$($MYSQLCOMMAND $TEST_DATABASE_NAME -e "SHOW FULL TABLES WHERE Table_type='VIEW'" -N | awk '{print $1}')
     for view in $VIEWS; do
         $MYSQLCOMMAND $TEST_DATABASE_NAME -e "DROP VIEW IF EXISTS \`$view\`"
+    done
+
+    TABLES=$($MYSQLCOMMAND $TEST_DATABASE_NAME -e "SHOW FULL TABLES WHERE Table_type='BASE TABLE'" -N | awk '{print $1}')
+    for table in $TABLES; do
+        $MYSQLCOMMAND $TEST_DATABASE_NAME -e "DROP TABLE IF EXISTS \`$table\`"
     done
 
     $MYSQLCOMMAND $TEST_DATABASE_NAME -e "SET FOREIGN_KEY_CHECKS=1"
