@@ -70,29 +70,43 @@ get_file_mtime_epoch() {
     return 1
 }
 
-if [ -f "$LOCK_FILE" ]; then
-    # Calcola l'eta' del lock file in minuti
-    lock_mtime=$(get_file_mtime_epoch "$LOCK_FILE")
-    if [[ ! "$lock_mtime" =~ ^[0-9]+$ ]]; then
-        echo "Errore: impossibile determinare l'eta' del lock file in modo portabile (lock file: $LOCK_FILE)"
-        exit 1
-    fi
+# Acquisizione atomica del lock file (noclobber impedisce race condition tra istanze concorrenti)
+acquire_lock() {
+    ( set -o noclobber; echo "$$" > "$LOCK_FILE" ) 2>/dev/null
+}
 
-    lock_age_seconds=$(( $(date +%s) - lock_mtime ))
-    lock_age_minutes=$(( lock_age_seconds / 60 ))
+if ! acquire_lock; then
+    if [ -f "$LOCK_FILE" ]; then
+        # Calcola l'eta' del lock file in minuti
+        lock_mtime=$(get_file_mtime_epoch "$LOCK_FILE")
+        if [[ ! "$lock_mtime" =~ ^[0-9]+$ ]]; then
+            echo "Errore: impossibile determinare l'eta' del lock file in modo portabile (lock file: $LOCK_FILE)"
+            exit 1
+        fi
 
-    if [ "$lock_age_minutes" -ge "$LOCK_TIMEOUT_MINUTES" ]; then
-        echo "Warning: lock file presente da $lock_age_minutes minuti (timeout: $LOCK_TIMEOUT_MINUTES min), eliminazione forzata"
-        rm -f "$LOCK_FILE"
+        lock_age_seconds=$(( $(date +%s) - lock_mtime ))
+        lock_age_minutes=$(( lock_age_seconds / 60 ))
+
+        if [ "$lock_age_minutes" -ge "$LOCK_TIMEOUT_MINUTES" ]; then
+            echo "Warning: lock file presente da $lock_age_minutes minuti (timeout: $LOCK_TIMEOUT_MINUTES min), eliminazione forzata"
+            rm -f "$LOCK_FILE"
+
+            if ! acquire_lock; then
+                echo "Errore: impossibile acquisire il lock dopo la rimozione del lock stale (lock file: $LOCK_FILE)"
+                exit 1
+            fi
+        else
+            echo "Errore: un'altra istanza di mysqlbackup.sh e' gia' in esecuzione (lock file: $LOCK_FILE, eta': $lock_age_minutes min)"
+            exit 1
+        fi
     else
-        echo "Errore: un'altra istanza di mysqlbackup.sh e' gia' in esecuzione (lock file: $LOCK_FILE, eta': $lock_age_minutes min)"
+        echo "Errore: impossibile acquisire il lock file $LOCK_FILE"
         exit 1
     fi
 fi
 
-# Crea il lock file e registra la rimozione automatica all'uscita (anche in caso di errore)
-echo "$$" > "$LOCK_FILE"
-trap "rm -f '$LOCK_FILE'" EXIT
+# Registra la rimozione automatica del lock all'uscita (anche in caso di errore)
+trap 'rm -f "$LOCK_FILE"' EXIT
 
 # Verifico le opzioni inserite da linea di comando
 while [[ $# -gt 0 ]]; do
