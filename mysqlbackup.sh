@@ -486,6 +486,9 @@ if [ "$CREATE_DATABASE_TEST" = true ]; then
             if [ "$GDRIVE_KEEP_FILES" -gt 0 ] 2>/dev/null; then
                 prune_gdrive_files "${database}_" "$GDRIVE_KEEP_FILES"
             fi
+
+            # Cleanup: rimuove il file di export locale dopo l'upload su Drive
+            rm -f "$BACKUP_FILE_TEST"
         fi
     fi
 
