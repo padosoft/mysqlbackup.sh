@@ -14,6 +14,7 @@ DATA=`/bin/date +"%a"`
 MYSQLBIN="/usr/bin/mysql"
 MYSQLDUMPBIN="/usr/bin/mysqldump"
 INCLUDE_DATABASES=()
+EXCLUDE_DATABASES=()
 CREATE_DATABASE_TEST=false
 TEST_DATABASE_NAME=""
 SQL_SCRIPTS_DIR=""
@@ -321,6 +322,24 @@ DBNAMES=`echo "show databases" |$MYSQLCOMMAND | egrep -v "Database|information_s
 if [[ ${#INCLUDE_DATABASES[@]} -gt 0 ]]; then
     DBNAMES="${INCLUDE_DATABASES[@]}"
     echo "$DBNAMES"
+elif [[ ${#EXCLUDE_DATABASES[@]} -gt 0 ]]; then
+    # Filtra i database elencati in EXCLUDE_DATABASES (config). Ignorato se si usa --databases.
+    FILTERED_DBNAMES=""
+    for db in $DBNAMES; do
+        skip=false
+        for excluded in "${EXCLUDE_DATABASES[@]}"; do
+            if [ "$db" = "$excluded" ]; then
+                skip=true
+                break
+            fi
+        done
+        if [ "$skip" = false ]; then
+            FILTERED_DBNAMES+="$db "
+        else
+            echo "Skipping database $db (presente in EXCLUDE_DATABASES)"
+        fi
+    done
+    DBNAMES="$FILTERED_DBNAMES"
 fi
 
 

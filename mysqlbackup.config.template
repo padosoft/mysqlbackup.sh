@@ -20,6 +20,10 @@ EXCLUDE_TABLES_STORICO=()
 EXCLUDE_TABLES_STATISTICHE=()
 EXCLUDE_TABLES_HOURLY=()
 
+# Database da escludere dal backup standard (ignorato quando si usa --databases e non si applica a --create-database-test)
+# Esempio: EXCLUDE_DATABASES=("mysql" "phpmyadmin")
+EXCLUDE_DATABASES=()
+
 # Test database settings
 TEST_DATABASE_NAME=""
 SQL_SCRIPTS_DIR=""  # Default: sql_script_for_test_db/ nella directory dello script
