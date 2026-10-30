@@ -255,11 +255,11 @@ upload_to_gdrive() {
     fi
 
     # Upload del contenuto e richiesta dei campi size per verifica
-    local file_size=$(stat -c%s "$file_path" 2>/dev/null || stat -f%z "$file_path")
+    # -T invia il file in streaming (--data-binary @file lo caricherebbe tutto in RAM);
+    # curl imposta da solo il Content-Length
     local response=$(curl -s -X PUT \
-        -H "Content-Length: $file_size" \
         -H "Content-Type: application/gzip" \
-        --data-binary "@$file_path" \
+        -T "$file_path" \
         "${upload_url}&fields=id,name,size")
 
     if ! echo "$response" | grep -q '"id"'; then
