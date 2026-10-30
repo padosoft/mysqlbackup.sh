@@ -7,6 +7,11 @@
 
 DBUSER="admin"
 DBPASS=`cat /etc/psa/.psa.shadow`
+# Opzioni passate a mysqldump (sia per il backup standard che per il flusso --create-database-test).
+# --single-transaction e' FORTEMENTE CONSIGLIATO sui db di produzione: esegue il dump in uno
+# snapshot REPEATABLE READ senza lockare le tabelle InnoDB, evitando di bloccare il traffico
+# applicativo durante backup lunghi. Senza questa opzione mysqldump fa FLUSH TABLES WITH READ
+# LOCK, che puo' provocare timeout/errori sulle query concorrenti.
 DBOPTION="-f --routines --single-transaction --set-gtid-purged=OFF"
 DBPORT=3306
 DBHOST=""

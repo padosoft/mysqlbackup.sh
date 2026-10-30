@@ -317,7 +317,7 @@ prune_gdrive_files() {
 
 echo "retrieve databases..."
 echo $MYSQLCOMMAND
-DBNAMES=`echo "show databases" |$MYSQLCOMMAND | egrep -v "Database|information_schema"`
+DBNAMES=`echo "show databases" | $MYSQLCOMMAND -N | grep -Ev "^(information_schema|performance_schema|sys)$"`
 #Se sono stati specificati i database da linea di comando elaboro solo quelli specificati
 if [[ ${#INCLUDE_DATABASES[@]} -gt 0 ]]; then
     DBNAMES="${INCLUDE_DATABASES[@]}"
@@ -342,6 +342,27 @@ elif [[ ${#EXCLUDE_DATABASES[@]} -gt 0 ]]; then
     DBNAMES="$FILTERED_DBNAMES"
 fi
 
+# Dump di un database su stdout: schema delle tabelle escluse + dati delle altre.
+# Lo schema delle tabelle escluse viene fatto in UNA sola invocazione di mysqldump (tabelle
+# passate come argomenti posizionali), invece di una connessione per tabella: evita di saturare
+# max_connections quando EXCLUDE_TABLES e' lungo.
+# Ritorna 1 se almeno una invocazione di mysqldump fallisce. Va letto con ${PIPESTATUS[0]}:
+# in "dump_database | gzip" l'exit code della pipe e' quello di gzip, che non vede gli errori
+# del dump e scriverebbe comunque un file parziale non vuoto.
+dump_database() {
+    local db="$1" rc=0
+    local exclude_params=""
+    for table in "${EXCLUDE_TABLES[@]}"; do
+        exclude_params+=" --ignore-table=$db.$table"
+    done
+    if [ ${#EXCLUDE_TABLES[@]} -gt 0 ]; then
+        $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION --no-data $db "${EXCLUDE_TABLES[@]}" || rc=1
+    fi
+    $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION $exclude_params $db || rc=1
+    return $rc
+}
+
+BACKUP_ERRORS=0
 
 # Skip del backup standard se si sta creando il database di test
 if [ "$CREATE_DATABASE_TEST" != true ]; then
@@ -355,26 +376,22 @@ for database in $DBNAMES; do
 
     echo "Backup db name $database starts at $(date +%Y-%m-%d.%H.%M.%S)"
 
-    # Costruisce la lista di tabelle da escludere
-    EXCLUDE_PARAMS=""
-    for table in "${EXCLUDE_TABLES[@]}"; do
-        EXCLUDE_PARAMS+=" --ignore-table=$database.$table"
-    done
-
-    # Dump completo con schema per le tabelle escluse
-    {
-        for table in "${EXCLUDE_TABLES[@]}"; do
-            $MYSQLDUMPBIN $MYSQLCONFIG --no-data $database $table
-        done
-        $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION $EXCLUDE_PARAMS $database
-    } | gzip > "$BACKUP_FILE"
+    dump_database "$database" | gzip > "$BACKUP_FILE"
+    dump_rc=${PIPESTATUS[0]}
 
     # Controllo se il backup è stato creato correttamente
-    if [ -s "$BACKUP_FILE" ]; then
+    if [ "$dump_rc" -ne 0 ]; then
+        # Con -f mysqldump prosegue sugli errori (es. vista non valida): il file puo' essere quasi
+        # completo, quindi non lo cancelliamo ma lo rinominiamo per non scambiarlo per un backup buono
+        echo "Backup failed: mysqldump exited with errors, file renamed to $BACKUP_FILE.failed"
+        mv -f "$BACKUP_FILE" "$BACKUP_FILE.failed"
+        BACKUP_ERRORS=$((BACKUP_ERRORS + 1))
+    elif [ -s "$BACKUP_FILE" ]; then
         echo "Backup completed successfully: $BACKUP_FILE"
     else
         echo "Backup failed: file does not exist or is empty, removing..."
         rm -f "$BACKUP_FILE"
+        BACKUP_ERRORS=$((BACKUP_ERRORS + 1))
     fi
 
     echo "Backup db name $database finish at $(date +%Y-%m-%d.%H.%M.%S)"
@@ -396,12 +413,6 @@ if [ "$CREATE_DATABASE_TEST" = true ]; then
         mkdir -p "$DEFPATH/data/$database"
     fi
 
-    # Costruisce la lista di tabelle da escludere (stessa logica del backup standard)
-    EXCLUDE_PARAMS=""
-    for table in "${EXCLUDE_TABLES[@]}"; do
-        EXCLUDE_PARAMS+=" --ignore-table=$database.$table"
-    done
-
     #
     # Step 1: Dump del database di produzione in un file temporaneo
     # Se gzip e' disponibile comprime il dump per risparmiare spazio su disco
@@ -419,45 +430,42 @@ if [ "$CREATE_DATABASE_TEST" = true ]; then
     echo "Dumping production database $database to temp file..."
     if [ "$TEMP_USE_GZIP" = true ]; then
         # Dump compresso: pipe diretta a gzip
-        {
-            for table in "${EXCLUDE_TABLES[@]}"; do
-                $MYSQLDUMPBIN $MYSQLCONFIG --no-data $database $table
-            done
-            $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION $EXCLUDE_PARAMS $database
-        } | gzip > "$TEMP_SQL_FILE"
+        dump_database "$database" | gzip > "$TEMP_SQL_FILE"
+        dump_rc=${PIPESTATUS[0]}
     else
         # Dump non compresso
-        {
-            for table in "${EXCLUDE_TABLES[@]}"; do
-                $MYSQLDUMPBIN $MYSQLCONFIG --no-data $database $table
-            done
-            $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION $EXCLUDE_PARAMS $database
-        } > "$TEMP_SQL_FILE"
+        dump_database "$database" > "$TEMP_SQL_FILE"
+        dump_rc=$?
     fi
 
-    if [ ! -s "$TEMP_SQL_FILE" ]; then
+    # Un dump parziale importato nel db di test darebbe un db incompleto: in caso di errore ci si ferma
+    if [ "$dump_rc" -ne 0 ] || [ ! -s "$TEMP_SQL_FILE" ]; then
         echo "Errore: dump del database di produzione fallito o vuoto"
         rm -f "$TEMP_SQL_FILE"
         exit 1
     fi
     echo "Dump completed: $TEMP_SQL_FILE"
 
-    # Step 2: Drop di tutte le tabelle e viste nel database di test
-    # Disabilita FK per evitare errori di dipendenza tra tabelle
+    # Step 2: Drop di tutte le tabelle e viste nel database di test in UNA sola connessione.
+    # Le SHOW FULL TABLES restano in connessioni separate (servono per leggere la lista prima
+    # di emettere i DROP). Tutti i DROP vengono poi inviati come singolo script via stdin: con
+    # N+ tabelle questo riduce N+3 connessioni a 3 totali, evitando "too many connections".
+    # Bonus: in una sessione unica SET FOREIGN_KEY_CHECKS=0 e' effettivo per tutti i DROP
+    # (nel loop precedente la variabile veniva persa subito perche' di sessione).
     echo "Cleaning test database $TEST_DATABASE_NAME..."
-    $MYSQLCOMMAND $TEST_DATABASE_NAME -e "SET FOREIGN_KEY_CHECKS=0"
-
     VIEWS=$($MYSQLCOMMAND $TEST_DATABASE_NAME -e "SHOW FULL TABLES WHERE Table_type='VIEW'" -N | awk '{print $1}')
-    for view in $VIEWS; do
-        $MYSQLCOMMAND $TEST_DATABASE_NAME -e "DROP VIEW IF EXISTS \`$view\`"
-    done
-
     TABLES=$($MYSQLCOMMAND $TEST_DATABASE_NAME -e "SHOW FULL TABLES WHERE Table_type='BASE TABLE'" -N | awk '{print $1}')
-    for table in $TABLES; do
-        $MYSQLCOMMAND $TEST_DATABASE_NAME -e "DROP TABLE IF EXISTS \`$table\`"
-    done
 
-    $MYSQLCOMMAND $TEST_DATABASE_NAME -e "SET FOREIGN_KEY_CHECKS=1"
+    {
+        echo "SET FOREIGN_KEY_CHECKS=0;"
+        for view in $VIEWS; do
+            echo "DROP VIEW IF EXISTS \`$view\`;"
+        done
+        for table in $TABLES; do
+            echo "DROP TABLE IF EXISTS \`$table\`;"
+        done
+        echo "SET FOREIGN_KEY_CHECKS=1;"
+    } | $MYSQLCOMMAND $TEST_DATABASE_NAME
 
     # Step 3: Import del dump nel database di test
     # Se il dump e' compresso, decomprime al volo con gunzip durante l'import
@@ -485,12 +493,15 @@ if [ "$CREATE_DATABASE_TEST" = true ]; then
         exit 1
     fi
     $MYSQLDUMPBIN $MYSQLCONFIG $DBOPTION $TEST_DATABASE_NAME | gzip > "$BACKUP_FILE_TEST"
+    dump_rc=${PIPESTATUS[0]}
 
-    if [ -s "$BACKUP_FILE_TEST" ]; then
+    # In caso di errore il file viene rimosso, cosi' non viene caricato su Drive
+    if [ "$dump_rc" -eq 0 ] && [ -s "$BACKUP_FILE_TEST" ]; then
         echo "Test database export completed: $BACKUP_FILE_TEST"
     else
         echo "Errore: export del database di test fallito o vuoto"
         rm -f "$BACKUP_FILE_TEST"
+        BACKUP_ERRORS=$((BACKUP_ERRORS + 1))
     fi
 
     # Step 6: Upload su Google Drive (se configurato)
@@ -519,3 +530,9 @@ fi
 
 _now=$(date +%Y-%m-%d.%H.%M.%S)
 echo "Finish at $_now"
+
+# Exit code != 0 se almeno un backup e' fallito, cosi' cron/monitoraggio possono accorgersene
+if [ "$BACKUP_ERRORS" -gt 0 ]; then
+    echo "Completed with $BACKUP_ERRORS failed backup(s)"
+    exit 1
+fi
